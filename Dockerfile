@@ -6,7 +6,7 @@
 ARG LIB_INSTALL
 ARG LIB_INSTALL2
 
-FROM public.ecr.aws/ubuntu/ubuntu:22.04 AS builder
+FROM ubuntu:22.04 AS builder
 
 ARG BOOST_IO
 ARG LIB_INSTALL
@@ -32,6 +32,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libbz2-dev \
       liblzma-dev \
       libcurl4-openssl-dev \
+      libboost-iostreams-dev \
       libssl-dev \
       python3 \
       zlib1g-dev \
@@ -61,11 +62,12 @@ WORKDIR /src/regenie
 RUN BGEN_PATH=/src/v1.1.7 HAS_BOOST_IOSTREAM=$BOOST_IO HTSLIB_PATH=/usr/local/lib/ STATIC=$STATIC cmake . \
       && make
 
-FROM public.ecr.aws/ubuntu/ubuntu:22.04
-ARG LIB_INSTALL2
+FROM ubuntu:22.04
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      libgomp1 gfortran-9 $LIB_INSTALL2 \
+      libcurl4-openssl-dev \
+      libgomp1 gfortran-9 libboost-iostreams-dev \
+      gdb \
       && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /src/regenie/regenie /usr/local/bin

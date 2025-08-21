@@ -1,299 +1,204 @@
-# For Intel MKL, set MKLROOT=<MKL_path> when running cmake
-#   e.g. MKLROOT=/opt/mkl/ cmake -S regenie_dir/ -B regenie_dir/build/
-# For OpenBLAS, set OPENBLAS_ROOT=<OpenBLAS_path> when running cmake
-#   note: it also requires lapacke library
-# For static compilation on Linux systems, set STATIC=1 when running cmake
-#   -> this excludes GLIBC
+# CMake build script for REGENIE
+# Translates the original Makefile for Linux and macOS systems.
+cmake_minimum_required(VERSION 3.15)
+project(regenie VERSION 4.1 LANGUAGES CXX C Fortran)
 
+# --- User-configurable Options (equivalent to Makefile variables) ---
+# These can be set from the command line, e.g., -DREGENIE_STATIC_LINKING=ON
+option(REGENIE_WITH_BOOST_IOSTREAM "Enable reading gzipped files via Boost Iostream" OFF)
+option(REGENIE_STATIC_LINKING "Enable static linking (Linux-only)" OFF)
+set(MKL_ROOT "" CACHE PATH "Path to Intel MKL root directory (e.g., /opt/intel/oneapi/mkl/latest)")
+set(OPENBLAS_ROOT "" CACHE PATH "Path to OpenBLAS root directory")
+set(HTSLIB_PATH "/usr/local/lib" CACHE PATH "Path to HTSlib installation directory (e.g., /usr/local)")
 
-cmake_minimum_required(VERSION 3.13)
+# --- Versioning ---
+# Read the version from the VERSION file
+if(EXISTS "${CMAKE_SOURCE_DIR}/VERSION")
+    file(READ "${CMAKE_SOURCE_DIR}/VERSION" REGENIE_VERSION_STRING)
+    string(STRIP "${REGENIE_VERSION_STRING}" REGENIE_VERSION_STRING) # Remove trailing newlines
+else()
+    set(REGENIE_VERSION_STRING "unknown")
+endif()
 
-# detect OS architecture
-execute_process(
-  COMMAND uname -s
-  OUTPUT_VARIABLE UNAME_S
-  OUTPUT_STRIP_TRAILING_WHITESPACE
-  )
+# Replicate the .gz suffix logic from the Makefile
+if(REGENIE_WITH_BOOST_IOSTREAM)
+    set(REGENIE_VERSION_STRING "${REGENIE_VERSION_STRING}.gz")
+endif()
 
-# Get Regenie version
-file(STRINGS "VERSION" RG_VERSION)
-
-project(regenie
-  VERSION ${RG_VERSION}
-  )
-
-include(CMakePackageConfigHelpers)
-include(GNUInstallDirs)
-
-# specify the C++ standard
+# --- Global Compiler Settings ---
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_EXTENSIONS OFF)  # Ensures -std=c++11
 
-######################################
-######## check input variables
+# Base compiler flags from CXXFLAGS
+add_compile_options(-O3 -Wall -pedantic -ffast-math -Wno-unused-local-typedefs -Wno-deprecated-declarations -Wno-long-long -Wno-c11-extensions -fPIC)
 
-# check BGEN_PATH
-if("$ENV{BGEN_PATH}" STREQUAL "")
-  message( FATAL_ERROR "Must specify path to BGEN library in 'BGEN_PATH'")
-else()
-  set(BGEN_PATH "$ENV{BGEN_PATH}" CACHE INTERNAL "Set BGEN library path")
-  if (NOT EXISTS ${BGEN_PATH})
-    message( FATAL_ERROR "Specified BGEN library directory '${BGEN_PATH}' does not exist")
-  endif()
+# Platform-specific flags
+if(APPLE)
+    add_compile_options(-stdlib=libc++)
+elseif(UNIX AND NOT APPLE) # For Linux
+    # Use CMake's official way to find and enable OpenMP
+    find_package(OpenMP)
+    if(OpenMP_FOUND)
+        message(STATUS "OpenMP found, enabling parallelization.")
+        add_compile_options(${OpenMP_CXX_FLAGS})
+    endif()
 endif()
 
-# check for static compilation
-if($ENV{STATIC})
-  set(BUILD_STATIC ON CACHE INTERNAL "Static compilation")
-  message( STATUS "Static compilation mode")
-endif()
+# --- External Libraries (Built with Make) ---
+# For dependencies that have their own Makefiles, we'll use a custom target
+# to invoke `make` and then link the resulting static library.
 
-# check Boost IOStreams
-if($ENV{HAS_BOOST_IOSTREAM})
-  set(HAS_BOOST_IOSTREAM 1 CACHE INTERNAL "Add Boost IO")
-  set(RG_VERSION "${RG_VERSION}.gz" CACHE INTERNAL "Update version")
-else()
-  set(HAS_BOOST_IOSTREAM 0 CACHE INTERNAL "Skip Boost IO")
-endif()
+# This function simplifies creating targets for the external libs
+function(add_external_make_lib lib_name)
+    set(LIB_DIR "${CMAKE_SOURCE_DIR}/external_libs/${lib_name}")
+    set(LIB_FILE "${LIB_DIR}/${ARGN}")
 
-# check MKL
-if(NOT "$ENV{MKLROOT}" STREQUAL "")
-  set(MKLROOT "$ENV{MKLROOT}" CACHE INTERNAL "Set MKL library path")
-  if (NOT EXISTS ${MKLROOT})
-    message( FATAL_ERROR "Specified MKL library directory '${MKLROOT}' does not exist")
-  endif()
-  message( STATUS "Will compile with Intel MKL library")
-endif()
+    add_custom_target(${lib_name}_build ALL
+            COMMAND ${CMAKE_MAKE_PROGRAM}
+            WORKING_DIRECTORY ${LIB_DIR}
+            COMMENT "Building dependency: ${lib_name}"
+    )
 
-# check HTSlib
-if(NOT "$ENV{HTSLIB_PATH}" STREQUAL "")
-  set(HTSLIB_PATH "$ENV{HTSLIB_PATH}" CACHE INTERNAL "Set HTSlib library path")
-  if (NOT EXISTS ${HTSLIB_PATH})
-    message( FATAL_ERROR "Specified HTSlib library directory '${HTSLIB_PATH}' does not exist")
-  endif()
-  message( STATUS "Will compile with HTSlib")
-endif()
+    # Create an IMPORTED library target
+    add_library(${lib_name} STATIC IMPORTED GLOBAL)
+    set_target_properties(${lib_name} PROPERTIES IMPORTED_LOCATION ${LIB_FILE})
 
-# check OpenBLAS
-if(NOT "$ENV{OPENBLAS_ROOT}" STREQUAL "")
-  set(OPENBLAS_ROOT "$ENV{OPENBLAS_ROOT}" CACHE INTERNAL "Set OpenBLAS library path")
-  if (NOT EXISTS ${OPENBLAS_ROOT})
-    message( FATAL_ERROR "Specified OpenBLAS library directory '${OPENBLAS_ROOT}' does not exist")
-  endif()
-  message( STATUS "Will compile with OpenBLAS library")
-endif()
+    # Ensure the library is built before it's used
+    add_dependencies(${lib_name} ${lib_name}_build)
+endfunction()
 
-######################################
-######## set flags and required libraries
+add_external_make_lib(mvtnorm libMvtnorm.a)
+add_external_make_lib(qf qf.a)
+add_external_make_lib(quadpack libquad.a)
+add_external_make_lib(pgenlib pgenlib.a)
 
-set(BLA_STATIC               ${BUILD_STATIC})
-set(Boost_USE_STATIC_LIBS    ${BUILD_STATIC})
-set(Boost_USE_DEBUG_LIBS     OFF)
-set(Boost_USE_MULTITHREADED  ON)
-set(Boost_USE_STATIC_RUNTIME OFF)
-
-# list each file specifically
-add_executable(regenie
-  ${CMAKE_SOURCE_DIR}/src/Data.cpp
-  ${CMAKE_SOURCE_DIR}/src/Files.cpp
-  ${CMAKE_SOURCE_DIR}/src/Geno.cpp
-  ${CMAKE_SOURCE_DIR}/src/HLM.cpp
-  ${CMAKE_SOURCE_DIR}/src/Interaction.cpp
-  ${CMAKE_SOURCE_DIR}/src/Joint_Tests.cpp
-  ${CMAKE_SOURCE_DIR}/src/Masks.cpp
-  ${CMAKE_SOURCE_DIR}/src/NNLS.cpp
-  ${CMAKE_SOURCE_DIR}/src/Pheno.cpp
-  ${CMAKE_SOURCE_DIR}/src/Regenie.cpp
-  ${CMAKE_SOURCE_DIR}/src/SKAT.cpp
-  ${CMAKE_SOURCE_DIR}/src/Step1_Models.cpp
-  ${CMAKE_SOURCE_DIR}/src/Step2_Models.cpp
-  ${CMAKE_SOURCE_DIR}/src/MultiTrait_Tests.cpp
-  ${CMAKE_SOURCE_DIR}/src/MCC.cpp
-  ${CMAKE_SOURCE_DIR}/src/Ordinal.cpp
-  ${CMAKE_SOURCE_DIR}/src/survival_data.cpp
-  ${CMAKE_SOURCE_DIR}/src/cox_ridge.cpp
-  ${CMAKE_SOURCE_DIR}/src/cox_score.cpp
-  ${CMAKE_SOURCE_DIR}/src/cox_firth.cpp
-  )
-target_include_directories(regenie PRIVATE ${CMAKE_SOURCE_DIR}/src)
-
-set(CMAKE_CXX_FLAGS "-O3 -Wall -pedantic -ffast-math -Wno-unused-local-typedefs -Wno-deprecated-declarations -Wno-long-long -Wno-c11-extensions -fPIC")
-add_definitions(-DVERSION_NUMBER="${RG_VERSION}")
-
-if("${UNAME_S}" STREQUAL "Linux")
-  find_package(OpenMP REQUIRED)
-  target_link_libraries(regenie PRIVATE OpenMP::OpenMP_CXX)
-  if(${BUILD_STATIC})
-    target_link_options(regenie BEFORE PRIVATE -static-libgcc PRIVATE -static-libstdc++)
-  endif()
-elseif("${UNAME_S}" STREQUAL "Darwin")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -stdlib=libc++")
-endif()
-
-set(EXTERN_LIBS_PATH "${CMAKE_SOURCE_DIR}/external_libs")
-target_include_directories(regenie PRIVATE ${EXTERN_LIBS_PATH}/)
-
-# BGEN library and its dependencies
-find_library(ZSTD_LIBRARY libzstd.a HINTS "${BGEN_PATH}/build/3rd_party/zstd-1.1.0" REQUIRED)
-find_library(DB_LIBRARY libdb.a HINTS "${BGEN_PATH}/build/db" REQUIRED)
-find_library(SQLITE3_LIBRARY libsqlite3.a HINTS "${BGEN_PATH}/build/3rd_party/sqlite3" REQUIRED)
-find_library(Boost_LIBRARY libboost.a HINTS "${BGEN_PATH}/build/3rd_party/boost_1_55_0" REQUIRED)
-find_library(BGEN_LIBRARY libbgen.a HINTS "${BGEN_PATH}/build" REQUIRED)
-target_link_libraries(regenie PRIVATE ${ZSTD_LIBRARY} ${BGEN_LIBRARY} ${DB_LIBRARY} ${SQLITE3_LIBRARY} ${Boost_LIBRARY})
-target_include_directories(regenie PRIVATE ${BGEN_PATH} ${BGEN_PATH}/genfile/include/ ${BGEN_PATH}/3rd_party/boost_1_55_0/ ${BGEN_PATH}/3rd_party/zstd-1.1.0/lib ${BGEN_PATH}/db/include/ ${BGEN_PATH}/3rd_party/sqlite3)
-
-# MVTNorm library
-set(MVTN_PATH "${EXTERN_LIBS_PATH}/mvtnorm")
-add_custom_target(
-   libMvtnorm
-   COMMAND make
-   WORKING_DIRECTORY ${MVTN_PATH}
+# Remeta has a special argument
+add_custom_target(remeta_build ALL
+        COMMAND ${CMAKE_MAKE_PROGRAM} remeta.a HTSLIB_PATH=${HTSLIB_PATH}/lib
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/external_libs/remeta
+        COMMENT "Building dependency: remeta"
 )
-target_link_libraries(regenie PRIVATE ${MVTN_PATH}/libMvtnorm.a)
-add_dependencies(regenie libMvtnorm)
+add_library(remeta STATIC IMPORTED GLOBAL)
+set_target_properties(remeta PROPERTIES IMPORTED_LOCATION "${CMAKE_SOURCE_DIR}/external_libs/remeta/remeta.a")
+add_dependencies(remeta remeta_build)
 
-# QF library
-set(QF_PATH "${EXTERN_LIBS_PATH}/qf")
-add_custom_target(
-   libqf
-   COMMAND make
-   WORKING_DIRECTORY ${QF_PATH}
-)
-target_link_libraries(regenie PRIVATE ${QF_PATH}/qf.a)
-add_dependencies(regenie libqf)
+# --- Main Executable Target ---
+file(GLOB REGENIE_SOURCES "src/*.cpp")
+add_executable(regenie ${REGENIE_SOURCES})
 
-# Quadpack library
-set(QUAD_PATH "${EXTERN_LIBS_PATH}/quadpack")
-add_custom_target(
-   libquad
-   COMMAND make
-   WORKING_DIRECTORY ${QUAD_PATH}
-)
-target_link_libraries(regenie PRIVATE ${QUAD_PATH}/libquad.a)
-add_dependencies(regenie libquad)
+# Pass the version number as a compile definition
+target_compile_definitions(regenie PRIVATE VERSION_NUMBER="${REGENIE_VERSION_STRING}")
 
-# PGEN library
-set(PGEN_PATH "${EXTERN_LIBS_PATH}/pgenlib")
-add_custom_target(
-   pgenlib
-   COMMAND make
-   WORKING_DIRECTORY ${PGEN_PATH}
-)
-target_link_libraries(regenie PRIVATE ${PGEN_PATH}/pgenlib.a)
-target_include_directories(regenie PRIVATE ${PGEN_PATH} ${PGEN_PATH}/simde/ ${PGEN_PATH}/include/)
-add_dependencies(regenie pgenlib)
-
-# REMETA library
-if(EXISTS ${HTSLIB_PATH})
-  set(REMETA_PATH "${EXTERN_LIBS_PATH}/remeta")
-  add_custom_target(
-     remeta
-     COMMAND make HTSLIB_PATH=${HTSLIB_PATH}
-     WORKING_DIRECTORY ${REMETA_PATH}
-  )
-  target_link_libraries(regenie PUBLIC ${REMETA_PATH}/remeta.a)
-  target_include_directories(regenie PUBLIC ${REMETA_PATH})
-  add_dependencies(regenie remeta)
-
-  add_definitions(-DWITH_HTSLIB)
-  find_library(HTSLIB libhts.a HINTS ${HTSLIB_PATH})
-  find_library(BZ2_LIB bz2 REQUIRED)
-  find_library(LZMA_LIB lzma REQUIRED)
-  find_library(CURL_LIB curl REQUIRED)
-  find_library(CRYPTO_LIB crypto REQUIRED)
-  target_link_libraries(regenie PUBLIC 
-    ${HTSLIB}
-    ${BZ2_LIB} ${LZMA_LIB} ${CURL_LIB} ${CRYPTO_LIB} 
-  )
-endif()
-
-# Intel MKL
-if(EXISTS ${MKLROOT})
-  add_definitions(-DWITH_MKL -DEIGEN_USE_BLAS -DEIGEN_USE_LAPACKE)
-  target_include_directories(regenie PRIVATE ${MKLROOT}/include/)
-  if(${BUILD_STATIC}) # specify static libs
-    find_library(MKL_LP64_LIB libmkl_intel_lp64.a 
-      HINTS "${MKLROOT}/lib/intel64"
-      "${MKLROOT}/lib" 
-      REQUIRED)
-    find_library(MKL_THREAD_LIB libmkl_gnu_thread.a 
-      HINTS "${MKLROOT}/lib/intel64"
-      "${MKLROOT}/lib" 
-      REQUIRED)
-    find_library(MKL_CORE_LIB libmkl_core.a 
-      HINTS "${MKLROOT}/lib/intel64"
-      "${MKLROOT}/lib" 
-      REQUIRED)
-    target_link_libraries(regenie PRIVATE "-Wl,--start-group" ${MKL_LP64_LIB} ${MKL_THREAD_LIB} ${MKL_CORE_LIB} "-Wl,--end-group" -lgomp)
-  else() # use dynamic libs
-    find_library(MKL_LP64_LIB mkl_intel_lp64 
-      PATHS "${MKLROOT}/lib/intel64"
-      "${MKLROOT}/lib" 
-      REQUIRED)
-    find_library(MKL_THREAD_LIB mkl_gnu_thread 
-      PATHS "${MKLROOT}/lib/intel64"
-      "${MKLROOT}/lib" 
-      REQUIRED)
-    find_library(MKL_CORE_LIB mkl_core 
-      PATHS "${MKLROOT}/lib/intel64"
-      "${MKLROOT}/lib" 
-      REQUIRED)
-    target_link_libraries(regenie PRIVATE "-Wl,--no-as-needed" ${MKL_LP64_LIB} ${MKL_THREAD_LIB} ${MKL_CORE_LIB} -lgomp)
-  endif()
-elseif(EXISTS ${OPENBLAS_ROOT}) # OpenBLAS
-  add_definitions(-DWITH_OPENBLAS -DEIGEN_USE_BLAS -DEIGEN_USE_LAPACKE)
-  target_include_directories(regenie PRIVATE ${OPENBLAS_ROOT}/include/)
-  find_library(LAPACK_LIB lapack REQUIRED)
-  find_library(BLAS_LIB openblas HINTS "${OPENBLAS_ROOT}/lib/" REQUIRED)
-  target_link_libraries(regenie PRIVATE ${LAPACK_LIB} -llapacke ${BLAS_LIB})
-endif()
-
-# cxxopts (header-only)
-target_include_directories(regenie PRIVATE ${EXTERN_LIBS_PATH}/cxxopts/include/)
-
-# LBFGS (header-only)
-target_include_directories(regenie PRIVATE ${EXTERN_LIBS_PATH}/LBFGSpp/include/)
-
-# Eigen (header-only)
-target_include_directories(regenie PRIVATE ${EXTERN_LIBS_PATH}/eigen-3.4.0/)
-
-# Boost IO
-if(${HAS_BOOST_IOSTREAM})
-  if("${UNAME_S}" STREQUAL "Darwin")
-    find_library(BOOST_LIB_IO libboost_iostreams libboost_iostreams.a REQUIRED)
-    target_link_libraries(regenie PRIVATE ${BOOST_LIB_IO})
-  elseif(${BUILD_STATIC})
-    find_library(BOOST_LIB_IO libboost_iostreams.a REQUIRED)
-    target_link_libraries(regenie PRIVATE ${BOOST_LIB_IO})
-  else()
-    target_link_libraries(regenie PRIVATE -lboost_iostreams)
-  endif()
-  add_definitions(-DHAS_BOOST_IOSTREAM)
-  message( STATUS "Will compile with Boost Iostreams library")
-endif()
-
-# Other libraries
-find_library(ZLIB_LIBRARY libz.a z REQUIRED)
-find_library(M_LIB m REQUIRED)
-find_library(DL_LIB dl REQUIRED)
-if("${UNAME_S}" STREQUAL "Linux")
-  set(GFORTRAN_LIBRARY "-lgfortran")
-elseif("${UNAME_S}" STREQUAL "Darwin")
-  find_library(GFORTRAN_LIBRARY gfortran REQUIRED)
-endif()
-target_link_libraries(
-  regenie PRIVATE
-  ${ZLIB_LIBRARY} ${M_LIB} ${DL_LIB} ${PTHREAD_LIB}
-  ${GFORTRAN_LIBRARY}
+# --- Include Directories ---
+set(BGEN_PATH "${CMAKE_SOURCE_DIR}/external_libs/bgen-v1.1.7")
+target_include_directories(regenie PRIVATE
+        "${CMAKE_SOURCE_DIR}/external_libs/pgenlib"
+        "${CMAKE_SOURCE_DIR}/external_libs/pgenlib/simde"
+        "${CMAKE_SOURCE_DIR}/external_libs/pgenlib/include"
+        "${CMAKE_SOURCE_DIR}/external_libs/cxxopts/include"
+        "${CMAKE_SOURCE_DIR}/external_libs/LBFGSpp/include"
+        "${CMAKE_SOURCE_DIR}/external_libs/eigen-3.4.0"
+        "${BGEN_PATH}"
+        "${BGEN_PATH}/genfile/include"
+        "${BGEN_PATH}/3rd_party/boost_1_55_0"
+        "${BGEN_PATH}/3rd_party/zstd-1.1.0/lib"
+        "${BGEN_PATH}/db/include"
+        "${BGEN_PATH}/3rd_party/sqlite3"
+        "${CMAKE_SOURCE_DIR}/external_libs/remeta"
 )
 
-install(TARGETS regenie RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
-message( STATUS "REGENIE v" ${RG_VERSION})
+# --- Link Libraries and Paths ---
 
-add_custom_target(full-clean
-  COMMAND cd "${MVTN_PATH}" && make clean
-  COMMAND cd "${QF_PATH}" && make clean
-  COMMAND cd "${QUAD_PATH}" && make clean
-  COMMAND cd "${PGEN_PATH}" && make clean
-  )
+# Handle BLAS/LAPACK (MKL or OpenBLAS)
+if(MKL_ROOT)
+    message(STATUS "MKL detected, configuring for MKL.")
+    target_compile_definitions(regenie PRIVATE WITH_MKL EIGEN_USE_BLAS EIGEN_USE_LAPACKE)
+    target_include_directories(regenie PRIVATE ${MKL_ROOT}/include)
+    if(REGENIE_STATIC_LINKING AND UNIX AND NOT APPLE)
+        target_link_libraries(regenie PRIVATE
+                "-Wl,--start-group"
+                "${MKL_ROOT}/lib/intel64/libmkl_intel_lp64.a"
+                "${MKL_ROOT}/lib/intel64/libmkl_gnu_thread.a"
+                "${MKL_ROOT}/lib/intel64/libmkl_core.a"
+                "-Wl,--end-group"
+        )
+    else()
+        target_link_directories(regenie PRIVATE ${MKL_ROOT}/lib/intel64)
+        target_link_libraries(regenie PRIVATE mkl_intel_lp64 mkl_gnu_thread mkl_core)
+    endif()
+    if(OpenMP_FOUND) # MKL needs an OpenMP runtime
+        target_link_libraries(regenie PRIVATE OpenMP::OpenMP_CXX)
+    endif()
+elseif(OPENBLAS_ROOT)
+    message(STATUS "OpenBLAS detected, configuring for OpenBLAS.")
+    target_compile_definitions(regenie PRIVATE WITH_OPENBLAS EIGEN_USE_BLAS EIGEN_USE_LAPACKE)
+    target_include_directories(regenie PRIVATE ${OPENBLAS_ROOT}/include)
+    target_link_directories(regenie PRIVATE ${OPENBLAS_ROOT}/lib)
+    target_link_libraries(regenie PRIVATE lapack lapacke openblas)
+    # Add rpath for OpenBLAS so it can be found at runtime
+    target_link_options(regenie PRIVATE "-Wl,-rpath,${OPENBLAS_ROOT}/lib")
+endif()
+
+# Handle Boost Iostream
+if(REGENIE_WITH_BOOST_IOSTREAM)
+    # FindBoost will find system-installed or Homebrew-installed boost
+    find_package(Boost REQUIRED COMPONENTS iostreams)
+    if(Boost_FOUND)
+        message(STATUS "Boost Iostream found, enabling support.")
+        target_compile_definitions(regenie PRIVATE HAS_BOOST_IOSTREAM)
+        target_link_libraries(regenie PRIVATE Boost::iostreams)
+    endif()
+endif()
+
+# Handle HTSlib (Linux-only as per Makefile logic)
+if(HTSLIB_PATH AND UNIX AND NOT APPLE)
+    message(STATUS "HTSlib path provided, configuring for HTSlib.")
+    target_compile_definitions(regenie PRIVATE WITH_HTSLIB)
+    find_library(HTS_LIBRARY NAMES hts PATHS ${HTSLIB_PATH}/lib)
+    if(HTS_LIBRARY)
+        message(STATUS "Found HTSlib at: ${HTS_LIBRARY}")
+        target_link_libraries(regenie PRIVATE ${HTS_LIBRARY} z bz2 lzma curl)
+    else()
+        message(WARNING "HTSlib library not found in ${HTSLIB_PATH}/lib")
+    endif()
+endif()
+
+# Link the pre-built BGEN library and its dependencies
+target_link_directories(regenie PRIVATE
+        "${BGEN_PATH}/build"
+        "${BGEN_PATH}/build/3rd_party/zstd-1.1.0"
+        "${BGEN_PATH}/build/db"
+        "${BGEN_PATH}/build/3rd_party/sqlite3"
+)
+target_link_libraries(regenie PRIVATE bgen zstd db sqlite3)
+
+# Link all the custom-built external libraries
+target_link_libraries(regenie PRIVATE
+        mvtnorm
+        qf
+        quadpack
+        pgenlib
+        remeta
+)
+
+# Link standard system libraries
+find_package(ZLIB REQUIRED)
+target_link_libraries(regenie PRIVATE ZLIB::ZLIB dl m)
+
+# Handle static linking flags on Linux
+if(REGENIE_STATIC_LINKING AND UNIX AND NOT APPLE)
+    target_link_options(regenie PRIVATE "-static-libgcc" "-static-libstdc++")
+endif()
+
+# On macOS, add the Homebrew lib directory to the runtime path (rpath)
+# This solves the `dyld: Library not loaded` error for gfortran, etc.
+if(APPLE)
+    if(EXISTS "/opt/homebrew/lib")
+        target_link_options(regenie PRIVATE "-Wl,-rpath,/opt/homebrew/lib")
+    elseif(EXISTS "/usr/local/lib")
+        target_link_options(regenie PRIVATE "-Wl,-rpath,/usr/local/lib")
+    endif()
+endif()
+
+message(STATUS "REGENIE version: ${REGENIE_VERSION_STRING}")
+message(STATUS "Configuration complete. You can now build with 'make' or 'ninja'.")

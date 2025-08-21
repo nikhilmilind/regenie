@@ -1,13 +1,8 @@
 FLAG  =-O2 -DNDEBUG -fPIC
-AR   ?= ar
-CXX  ?= g++
-CC   ?= gcc
-FC   ?= gfortran
-
-UNAME_S := $(shell uname -s)
-ifeq ($(UNAME_S),Darwin)
- FLAG += -arch x86_64
-endif
+AR   = ar
+CXX  = g++
+CC   = gcc
+FC   = gfortran
 
 libMvtnorm.a: mvtnorm.o mvt.o randomF77.o
 	${AR} rcs $@ $^ 

@@ -1,8 +1,8 @@
 #
 # Makefile to compile REMETA library
 #
-AR         ?= ar
-CXX        ?= g++
+AR         = ar
+CXX        = g++
 CXXFLAGS    = -O3 -Wall -std=c++17
 CFLAGS      = 
 INC         = ../eigen-3.4.0/
@@ -13,7 +13,7 @@ endif
 
 UNAME_S := $(shell uname -s)
 ifeq ($(UNAME_S),Darwin)
-	CXXFLAGS += -arch x86_64
+	CXXFLAGS += -target arm64-apple-darwin23.1.0
 endif
 
 OBJECTS       = bgz_writer.o regenie_ld_matrix_writer.o
