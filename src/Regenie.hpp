@@ -434,6 +434,14 @@ struct param {
   std::string ld_list_file = "";
   std::vector<uint32_t> ld_sv_offsets;
   std::map<std::string, uint32_t> extract_vars_order;//order of variants
+
+  // full data likelihood
+  bool full_lik = false;
+  int full_lik_mac = 50;
+  double full_lik_beta_min = -3.0;
+  double full_lik_beta_max = 3.0;
+  int full_lik_grid_size = 1001;
+  Eigen::VectorXd full_lik_grid;
 };
 
 struct geno_file_info {

@@ -114,6 +114,7 @@ class Data {
     void compute_res_count(int const&);
     void compute_res_cox(int const&);
     void setup_output(Files*,std::string&,std::vector<std::shared_ptr<Files>>&,std::vector<std::string>&);
+    void setup_fl_output(std::vector<std::shared_ptr<Files>>&, std::vector<string>&) ;
 
     // step 2 using multithreading in eigen
     double check_pval(double const&,int const&,int const&,int const&);

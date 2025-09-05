@@ -66,6 +66,7 @@ if [ "$action" = "build" ]; then
   fi
 
 	docker build --rm -f ${DFILE} \
+	  --platform linux/x86_64 \
 		--no-cache --pull \
 		--build-arg BOOST_IO=${HAS_BOOST_IOSTREAM} \
 		--build-arg LIB_INSTALL=${LIB_BIO} \

@@ -131,6 +131,8 @@ struct variant_block {
   std::vector<std::string> sum_stats_multiphen;
   // association test info
   std::vector<std::string> sum_stats;
+  // full likelihood info
+  std::vector<std::string> full_likelihood;
 };
 
 // for conditional analyses

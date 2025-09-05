@@ -2932,6 +2932,9 @@ void reset_stats(variant_block* snp_data, struct param const& params){
     snp_data->sum_stats.resize( params.n_pheno );
     std::fill(snp_data->sum_stats.begin(), snp_data->sum_stats.end(), "");
 
+    snp_data->full_likelihood.resize(params.n_pheno);
+    std::fill(snp_data->full_likelihood.begin(), snp_data->full_likelihood.end(), "");
+
     // multi-trait test results
     if(params.trait_set) {
       snp_data->sum_stats_mt.resize(1); // current only 1 trait set
