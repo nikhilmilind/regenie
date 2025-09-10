@@ -558,7 +558,9 @@ void compute_score_bt(int const &isnp, int const &snp_index, int const &chrom, i
         x_beta = x_beta.colwise() += blups;
 
         MatrixXd sigmoid;
-        sigmoid = (1 + (-x_beta.array()).exp()).inverse().matrix();
+        ArrayXXd exp_val;
+        exp_val = (-x_beta.array().abs()).exp();
+        sigmoid = (x_beta.array() >= 0).select((1.0 + exp_val).inverse(), exp_val / (1.0 + exp_val)).matrix();
 
         MatrixXd ll;
         ll = pheno_data.phenotypes.col(i).asDiagonal() * sigmoid.array().log().matrix();
