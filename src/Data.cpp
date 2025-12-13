@@ -2056,9 +2056,9 @@ std::string build_fl_output_header(param const &params) {
 
     buffer << "CHROM POS ID REF ALT ";
 
-    for (Eigen::Index i = 0; i < params.full_lik_grid_size; i++) {
+    for (Eigen::Index i = 0; i < params.full_lik_grid.size(); i++) {
         buffer << params.full_lik_grid(i);
-        buffer << ((i+1) < params.full_lik_grid_size ? " " : "");
+        buffer << ((i+1) < params.full_lik_grid.size() ? " " : "");
     }
 
     buffer << endl;

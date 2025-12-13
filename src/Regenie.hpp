@@ -437,10 +437,7 @@ struct param {
 
   // full data likelihood
   bool full_lik = false;
-  int full_lik_mac = 50;
-  double full_lik_beta_min = -3.0;
-  double full_lik_beta_max = 3.0;
-  int full_lik_grid_size = 1001;
+  bool full_lik_normalize_geno = false;
   Eigen::VectorXd full_lik_grid;
 };
 

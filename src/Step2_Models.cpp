@@ -539,29 +539,38 @@ void compute_score_bt(int const &isnp, int const &snp_index, int const &chrom, i
 
         VectorXd corrected_geno;
 
+        // Get the corrected genotype (G-tilde) used by REGENIE
         if (dt_thr->is_sparse) {
             corrected_geno = GWs;
         } else {
             corrected_geno = dt_thr->Gres;
         }
 
+        // Mean center the genotype if it is not already
         corrected_geno = (corrected_geno.array() - corrected_geno.mean()).matrix();
 
-        double geno_norm = Geno.matrix().norm();
-        double corrected_geno_norm = corrected_geno.norm();
-        corrected_geno = ((geno_norm / corrected_geno_norm) * corrected_geno.array()).matrix();
+        // If set, normalize the effect size after partialing out the effect of the covariates
+        if (params.full_lik_normalize_geno) {
+            double geno_norm = Geno.matrix().norm();
+            double corrected_geno_norm = corrected_geno.norm();
+            corrected_geno = ((geno_norm / corrected_geno_norm) * corrected_geno.array()).matrix();
+        }
 
+        // Calculate the offset from the PRS on the log-odds scale
         VectorXd blups = m_ests.Y_hat_p.col(i).array().log() - (1 - m_ests.Y_hat_p.col(i).array()).log();
 
+        // Calculate the linear combination for regression
         MatrixXd x_beta;
-        x_beta = corrected_geno * params.full_lik_grid.matrix().reshaped(1, params.full_lik_grid_size);
+        x_beta = corrected_geno * params.full_lik_grid.matrix().reshaped(1, params.full_lik_grid.size());
         x_beta = x_beta.colwise() += blups;
 
+        // Evaluate the sigmoid function on the linear combination
         MatrixXd sigmoid;
         ArrayXXd exp_val;
         exp_val = (-x_beta.array().abs()).exp();
         sigmoid = (x_beta.array() >= 0).select((1.0 + exp_val).inverse(), exp_val / (1.0 + exp_val)).matrix();
 
+        // Estimate the log likelihood over a grid of effect size values
         MatrixXd ll;
         ll = pheno_data.phenotypes.col(i).asDiagonal() * sigmoid.array().log().matrix();
         ll += (1 - pheno_data.phenotypes.col(i).array()).matrix().asDiagonal() * (1 - sigmoid.array()).log().matrix();
@@ -569,6 +578,7 @@ void compute_score_bt(int const &isnp, int const &snp_index, int const &chrom, i
         VectorXd gene_lls;
         gene_lls = ll.colwise().sum();
 
+        // Output the log likelihoods to a buffer that is written out later
         IOFormat gene_lls_format (FullPrecision, DontAlignCols, " ", " ");
         buffer << gene_lls.format(gene_lls_format) << endl;
 

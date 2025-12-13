@@ -368,11 +368,8 @@ void read_params_and_check(int &argc, char *argv[], struct param *params, struct
             ("coxnofirth", "not using firth in cox model, the test uses likelihood ratio test")
             ("coxscore-exact", "use exact score variance")
             ("nocov-approx", "skip adjusting for covariates in score test")
-            ("full-lik", "write full likelihood for genes with low MAC")
-            ("full-lik-mac", "MAC at or below which to output the full data likelihood", cxxopts::value<int>(params->full_lik_mac), "INT(=50)")
-            ("full-lik-beta-min", "minimum beta value for grid", cxxopts::value<double>(params->full_lik_beta_min), "FLOAT(=-3.0)")
-            ("full-lik-beta-max", "maximum beta value for grid", cxxopts::value<double>(params->full_lik_beta_max), "FLOAT(=3.0)")
-            ("full-lik-grid-size", "full likelihood grid size", cxxopts::value<int>(params->full_lik_grid_size), "INT(=1001)");
+            ("full-lik", "write full likelihood for genes with low MAC", cxxopts::value<std::string>(), "STRING,..,STRING")
+            ("full-lik-normalize-geno", "normalize the genotype after partialing out the covariates");
 
     try {
         bool acato_use_all_rhos = false;
@@ -525,7 +522,19 @@ void read_params_and_check(int &argc, char *argv[], struct param *params, struct
         if (vm.count("no-robust")) params->no_robust = true;
         if (vm.count("hlm-novquad")) params->hlm_vquad = false;
         if (vm.count("print-vcov")) params->print_vcov = true;
-        if (vm.count("full-lik")) params->full_lik = true;
+        if (vm.count("full-lik")) {
+            tmp_str_vec = string_split(vm["full-lik"].as<string>(), ",");
+            params->full_lik_grid.resize(tmp_str_vec.size());
+            for (Eigen::Index i = 0; i < tmp_str_vec.size(); i++) {
+                try {
+                    params->full_lik_grid(i) = stod(tmp_str_vec[i]);
+                }
+                catch (const invalid_argument& ia) {
+                    throw "Grid points must be finite floating point values";
+                }
+            }
+        }
+        if (vm.count("full-lik-normalize-geno")) params->full_lik_normalize_geno = true;
         if (vm.count("compute-corr") || vm.count("output-corr-text")) {
             params->getCorMat = true;
             params->cormat_force_vars = (vm.count("forcein-vars") && vm.count("extract")) || vm.count("ld-extract");
@@ -1354,25 +1363,8 @@ void read_params_and_check(int &argc, char *argv[], struct param *params, struct
             if (!params->snp_set) {
                 throw "Full likelihood is only supported for burden tests";
             }
-            if (params->full_lik_mac <= 0) {
-                throw "MAC must be a nonnegative value";
-            }
-            if (params->full_lik_beta_min >= params->full_lik_beta_max) {
-                throw "Minimum of grid must be less than maximum";
-            }
-            if (params->full_lik_grid_size <= 1) {
-                throw "The grid size must be at least 2";
-            }
-
-            params->full_lik_grid.resize(params->full_lik_grid_size);
-
-            double grid_delta = (params->full_lik_beta_max - params->full_lik_beta_min) / (params->full_lik_grid_size - 1);
-
-            for (Eigen::Index i = 0; i < params->full_lik_grid_size; i++) {
-                params->full_lik_grid(i) = params->full_lik_beta_min + static_cast<double>(i) * grid_delta;
-            }
-        } else if (vm.count("full-lik-mac")) {
-            sout << "WARNING: the --full-lik option must be set for --full-lik-mac to be used.\n";
+        } else if (params->full_lik_normalize_geno) {
+            sout << "WARNING: the --full-lik option must be set for --full-lik-normalize-geno to be used.\n";
         }
 
         // check input files
