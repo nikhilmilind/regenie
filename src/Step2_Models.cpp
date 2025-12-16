@@ -564,16 +564,15 @@ void compute_score_bt(int const &isnp, int const &snp_index, int const &chrom, i
         x_beta = corrected_geno * params.full_lik_grid.matrix().reshaped(1, params.full_lik_grid.size());
         x_beta = x_beta.colwise() += blups;
 
-        // Evaluate the sigmoid function on the linear combination
-        MatrixXd sigmoid;
-        ArrayXXd exp_val;
-        exp_val = (-x_beta.array().abs()).exp();
-        sigmoid = (x_beta.array() >= 0).select((1.0 + exp_val).inverse(), exp_val / (1.0 + exp_val)).matrix();
-
         // Estimate the log likelihood over a grid of effect size values
+        ArrayXXd log_sum_exp;
+        log_sum_exp = (1.0 + (-x_beta.array().abs()).exp()).log();
+
         MatrixXd ll;
-        ll = pheno_data.phenotypes.col(i).asDiagonal() * sigmoid.array().log().matrix();
-        ll += (1 - pheno_data.phenotypes.col(i).array()).matrix().asDiagonal() * (1 - sigmoid.array()).log().matrix();
+        ll = (x_beta.array() >= 0).select(
+            (pheno_data.phenotypes.col(i).array() - 1.0).matrix().asDiagonal() * x_beta,
+            pheno_data.phenotypes.col(i).asDiagonal() * x_beta
+        ) - log_sum_exp.matrix();
 
         VectorXd gene_lls;
         gene_lls = ll.colwise().sum();
